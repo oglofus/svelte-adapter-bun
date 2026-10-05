@@ -1,0 +1,5 @@
+{
+  "name": "adapter-env-fixture",
+  "private": true,
+  "type": "module"
+}

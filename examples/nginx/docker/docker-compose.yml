@@ -1,8 +1,8 @@
 services:
   app:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile.app
+      context: ../../..
+      dockerfile: examples/nginx/docker/Dockerfile.app
     container_name: app
     # ports:
     #   - "3001:3000"
@@ -10,7 +10,8 @@ services:
       # Mount the client folder from app container to nginx
       - app-static:/home/bun/public
     environment:
-      - ORIGIN=https://app.localhost
+      - ORIGIN=http://app.localhost
+      - ADDRESS_HEADER=x-real-ip
     networks:
       - app-network
   nginx:
@@ -23,7 +24,7 @@ services:
       - '80:80'
     volumes:
       # Mount nginx configuration
-      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
       # Mount client folder
       - app-static:/var/www/app:ro
 

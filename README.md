@@ -1,186 +1,142 @@
 # svelte-adapter-bun
 
-[Adapter](https://kit.svelte.dev/docs/adapters) for SvelteKit apps that generates a standalone [Bun](https://github.com/oven-sh/bun) server.
+A SvelteKit 3 adapter that generates a Bun server. Uses SvelteKit's public adapter APIs and required Vite build pipeline, with native `Bun.serve`, `Bun.file`, and Bun WebSockets at runtime. No separate bundler, static-server dependency, Node adapter, or patches to SvelteKit internals.
 
-## :zap: Usage
+## Requirements
 
-Install with `bun add -d svelte-adapter-bun`, then add the adapter to your `svelte.config.js`:
+- Bun **1.4.2 or newer**
+- SvelteKit **3**, Svelte **5.57.1 or newer**
+- Vite **8** and `@sveltejs/vite-plugin-svelte` **7**
+- For TypeScript apps, TypeScript **6** (the version supported by Kit 3)
 
-```js
-// svelte.config.js
+## Usage
+
+```sh
+bun add -d svelte-adapter-bun @types/bun
+```
+
+SvelteKit 3 configuration belongs in `vite.config.ts`, not `svelte.config.js`:
+
+```ts
+import { defineConfig } from 'vite';
+import { sveltekit } from '@sveltejs/kit/vite';
 import adapter from 'svelte-adapter-bun';
 
-export default {
-  kit: {
-    adapter: adapter(),
-  },
-};
+export default defineConfig({
+  plugins: [sveltekit({ adapter: adapter() })],
+});
 ```
 
-After building the server (`vite build`), use the following command to start:
+Use `"build": "bun --bun run vite build"` in your app's scripts. The `--bun` flag ensures SvelteKit's tooling also runs in Bun rather than following a Node shebang.
 
-```
-# go to build directory
-cd build/
-
-# run Bun
-bun run ./index.js
-```
-
-## :gear: Options
-
-The adapter can be configured with various options:
-
-```js
-// svelte.config.js
-import adapter from 'svelte-adapter-bun';
-export default {
-  kit: {
-    adapter: adapter({
-      out: 'build',
-      serveAssets: true,
-      envPrefix: 'MY_CUSTOM_',
-      precompress: true,
-    }),
-  },
-};
-```
-
-### out
-
-The directory to build the server to. It defaults to `build` — i.e. `bun run ./index.js` would start the server locally after it has been created.
-
-### serveAssets
-
-Serve static assets. Default: `true`
-
-- [x] Support [HTTP range requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/Range_requests)
-
-### precompress
-
-Enables precompressing using gzip and brotli for assets and prerendered pages. It defaults to `true`.
-
-### envPrefix
-
-If you need to change the name of the environment variables used to configure the deployment (for example, to deconflict with environment variables you don't control), you can specify a prefix:
-
-```js
-envPrefix: 'MY_CUSTOM_';
-```
-
-```
-MY_CUSTOM_HOST=127.0.0.1 \
-MY_CUSTOM_PORT=4000 \
-MY_CUSTOM_ORIGIN=https://my.site \
+```sh
+bun run build
 bun build/index.js
 ```
 
-## :spider_web: WebSocket Server
+Deploy the **whole** output directory, including `server`, `adapter-bun.js`, `client`, and `prerendered`. Production dependencies referenced by your app remain external: install them with `bun install --production --frozen-lockfile` on the deployment target. Development dependencies required by the server are bundled by SvelteKit.
 
-https://bun.sh/docs/api/websockets
-
-The server supports WebSocket connections. To enable them, you need to add a `websocket` hook to server hooks.
+## Adapter options
 
 ```ts
-// hooks.server.ts
-import type { Handle } from '@sveltejs/kit';
+adapter({
+  out: 'build',
+  precompress: true,
+  serveAssets: true,
+  envPrefix: '',
+  // websocket: './src/websocket.ts',
+});
+```
+
+| Option        | Default | Purpose                                                                                                       |
+| ------------- | ------- | ------------------------------------------------------------------------------------------------------------- |
+| `out`         | `build` | Output directory; removed and recreated during adaptation                                                     |
+| `precompress` | `true`  | Generate gzip and brotli variants through SvelteKit                                                           |
+| `serveAssets` | `true`  | Serve client assets and prerendered pages; set false for an external static server                            |
+| `envPrefix`   | `''`    | Prefix deployment settings, e.g. `APP_PORT`                                                                   |
+| `websocket`   | unset   | Optional override module with a default `Bun.WebSocketHandler`; otherwise loads `websocket` from server hooks |
+
+Static serving supports GET/HEAD, conditional requests, single byte ranges, precompressed representations, immutable asset caching, base paths, and prerendered trailing-slash redirects.
+
+## Deployment environment
+
+Bun loads `.env` files natively; no dotenv library is needed.
+
+| Variable          | Default                               | Purpose                                                                  |
+| ----------------- | ------------------------------------- | ------------------------------------------------------------------------ |
+| `HOST`            | `0.0.0.0`                             | TCP bind address                                                         |
+| `PORT`            | `3000`                                | TCP port; `0` chooses an available port                                  |
+| `SOCKET_PATH`     | unset                                 | Unix socket instead of TCP                                               |
+| `ORIGIN`          | Kit `paths.origin`, or request origin | Public origin, e.g. `https://example.com`                                |
+| `PROTOCOL_HEADER` | unset                                 | Trusted proxy protocol header                                            |
+| `HOST_HEADER`     | unset                                 | Trusted proxy host header                                                |
+| `PORT_HEADER`     | unset                                 | Trusted proxy port header                                                |
+| `ADDRESS_HEADER`  | unset                                 | Trusted proxy client-address header; otherwise uses `server.requestIP()` |
+| `XFF_DEPTH`       | `1`                                   | Positive trusted proxy count, read from the right of `x-forwarded-for`   |
+| `BODY_SIZE_LIMIT` | `512K`                                | Bytes or a `B`, `K`, `M`, `G` suffix; `0` rejects nonempty bodies        |
+| `IDLE_TIMEOUT`    | `10`                                  | TCP idle timeout in seconds, integer 0–255; 0 disables it                |
+
+Only configure forwarding headers behind a trusted proxy that strips or overwrites client-supplied values. For Unix sockets, configure `ADDRESS_HEADER` if your app uses `event.getClientAddress()`.
+
+```sh
+HOST=127.0.0.1 PORT=4000 ORIGIN=https://example.com bun build/index.js
+```
+
+`envPrefix: 'APP_'` changes these settings to `APP_HOST`, `APP_PORT`, etc. Use a dedicated prefix; unknown prefixed deployment variables are rejected to catch configuration mistakes.
+
+On SIGINT/SIGTERM, the server drains requests for up to 30 seconds, then force-closes remaining connections and emits `sveltekit:shutdown`. SvelteKit's server instrumentation runs before application startup, including its environment initializer.
+
+## Native WebSockets
+
+Keep the `websocket` export alongside `handle` in `hooks.server.ts`. This adapter convention is backwards compatible; the handler is passed directly to `Bun.serve` and built in SvelteKit's shared server module graph, without patches to Kit's generated code. Custom `files.hooks.server` locations are supported.
+
+```ts
+// src/hooks.server.ts
+import type { Handle } from '@sveltejs/kit/hooks';
 
 export const handle: Handle = async ({ event, resolve }) => {
-  const { request } = event;
-  const url = new URL(request.url);
-
-  // Check for WebSocket upgrade request
   if (
-    request.headers.get('connection')?.toLowerCase().includes('upgrade') &&
-    request.headers.get('upgrade')?.toLowerCase() === 'websocket' &&
-    url.pathname.startsWith('/ws')
+    event.url.pathname === '/ws' &&
+    event.request.headers.get('upgrade')?.toLowerCase() === 'websocket'
   ) {
-    await event.platform.server.upgrade(event.platform.request);
-    return new Response(null, { status: 101 });
+    // Check session, Origin, and permissions here.
+    if (event.platform?.upgrade({ data: undefined })) {
+      return new Response(null, { status: 204 });
+    }
+    return new Response('Upgrade failed', { status: 400 });
   }
-
   return resolve(event);
 };
 
 export const websocket: Bun.WebSocketHandler<undefined> = {
-  async open(ws) {
-    console.log('WebSocket opened');
-    ws.send('Slava Ukraїni');
-  },
   message(ws, message) {
-    console.log('WebSocket message received');
     ws.send(message);
-  },
-  close(ws) {
-    console.log('WebSocket closed');
   },
 };
 ```
 
-For detailed documentation, examples, and advanced usage patterns, visit the [WebSocket example README](examples/websocket/README.md).
+`platform.upgrade` calls `server.upgrade` with the original Bun request. Bun sends the 101 response itself; the adapter discards the hook's placeholder response and returns `undefined` to Bun.
 
-## :desktop_computer: Environment variables
+Existing hooks using `await event.platform.server.upgrade(event.platform.request)` and returning `new Response(null, { status: 101 })` also continue to work: the adapter tracks that native upgrade and discards the placeholder. New code can use `platform.upgrade` and a 204 placeholder. Check the upgrade boolean so failures still produce an HTTP response.
 
-> Bun automatically reads configuration from `.env.local`, `.env.development` and `.env`
+For a separate module, set `websocket: './src/websocket.ts'` and default-export the native handler. No additional library is needed.
 
-### `PORT` and `HOST`
+Adapter WebSockets are available in the **built Bun server**, not Vite's dev/preview server. See [the WebSocket example](examples/websocket/README.md).
 
-By default, the server will accept connections on `0.0.0.0` using port 3000. These can be customized with the `PORT` and `HOST` environment variables:
+## Migration from 1.x
 
-```
-HOST=127.0.0.1 PORT=4000 bun build/index.js
-```
+This is a breaking toolchain update: Kit 2 is no longer supported. Move config into `sveltekit({...})` in Vite config and follow the [Kit 3 migration guide](https://svelte.dev/docs/kit/migrating-to-sveltekit-3). Kit 3 exports `Handle` from `@sveltejs/kit/hooks`; the `websocket` export and existing platform upgrade pattern remain compatible.
 
-### `SOCKET_PATH`
+## Developing this adapter
 
-Instead of using TCP/IP connections, you can configure the server to listen on a Unix domain socket by setting the `SOCKET_PATH` environment variable:
-
-```
-SOCKET_PATH=/tmp/sveltekit.sock bun build/index.js
-```
-
-When `SOCKET_PATH` is set, the server will ignore the `HOST` and `PORT` settings and use the Unix socket instead. This is useful for deployment behind reverse proxies like nginx.
-
-### `ORIGIN`, `PROTOCOL_HEADER` and `HOST_HEADER`
-
-HTTP doesn't give SvelteKit a reliable way to know the URL that is currently being requested. The simplest way to tell SvelteKit where the app is being served is to set the `ORIGIN` environment variable:
-
-```
-ORIGIN=https://my.site bun build/index.js
+```sh
+bun install --frozen-lockfile
+bun run build
+bun run check
+bun test
 ```
 
-With this, a request for the `/stuff` pathname will correctly resolve to `https://my.site/stuff`. Alternatively, you can specify headers that tell SvelteKit about the request protocol and host, from which it can construct the origin URL:
-
-```
-PROTOCOL_HEADER=x-forwarded-proto HOST_HEADER=x-forwarded-host bun build/index.js
-```
-
-> [`x-forwarded-proto`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-Proto) and [`x-forwarded-host`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-Host) are de facto standard headers that forward the original protocol and host if you're using a reverse proxy (think load balancers and CDNs). You should only set these variables if your server is behind a trusted reverse proxy; otherwise, it'd be possible for clients to spoof these headers.
-
-### `ADDRESS_HEADER` and `XFF_DEPTH`
-
-The [RequestEvent](https://kit.svelte.dev/docs/types#additional-types-requestevent) object passed to hooks and endpoints includes an `event.clientAddress` property representing the client's IP address. [Bun.js haven't got functionality](https://github.com/Jarred-Sumner/bun/issues/518) to get client's IP address, so SvelteKit will receive `127.0.0.1` or if your server is behind one or more proxies (such as a load balancer), you can get an IP address from headers, so we need to specify an `ADDRESS_HEADER` to read the address from:
-
-```
-ADDRESS_HEADER=True-Client-IP bun build/index.js
-```
-
-> Headers can easily be spoofed. As with `PROTOCOL_HEADER` and `HOST_HEADER`, you should [know what you're doing](https://adam-p.ca/blog/2022/03/x-forwarded-for/) before setting these.
-> If the `ADDRESS_HEADER` is `X-Forwarded-For`, the header value will contain a comma-separated list of IP addresses. The `XFF_DEPTH` environment variable should specify how many trusted proxies sit in front of your server. E.g. if there are three trusted proxies, proxy 3 will forward the addresses of the original connection and the first two proxies:
-
-```
-<client address>, <proxy 1 address>, <proxy 2 address>
-```
-
-Some guides will tell you to read the left-most address, but this leaves you [vulnerable to spoofing](https://adam-p.ca/blog/2022/03/x-forwarded-for/):
-
-```
-<spoofed address>, <client address>, <proxy 1 address>, <proxy 2 address>
-```
-
-Instead, we read from the _right_, accounting for the number of trusted proxies. In this case, we would use `XFF_DEPTH=3`.
-
-> If you need to read the left-most address instead (and don't care about spoofing) — for example, to offer a geolocation service, where it's more important for the IP address to be _real_ than _trusted_, you can do so by inspecting the `x-forwarded-for` header within your app.
+Tests use `bun:test`, including production-server integration tests. Examples are independent projects with separate lockfiles, not workspaces. Run `bun run pack` in the root first; each example installs the resulting local `svelte-adapter-bun.tgz`, avoiding recursive directory copies and testing the published package contents. Then install/check/build the example with Bun. Repack and reinstall the archive after adapter changes. Prettier is a development-only formatter.
 
 ## License
 

@@ -1,4 +1,4 @@
-/* global ENV_PREFIX */
+import { envPrefix } from 'svelte-adapter-bun:manifest';
 
 const expected = new Set([
   'SOCKET_PATH',
@@ -14,20 +14,20 @@ const expected = new Set([
   'IDLE_TIMEOUT',
 ]);
 
-if (ENV_PREFIX) {
+if (envPrefix) {
   for (const name in Bun.env) {
-    if (name.startsWith(ENV_PREFIX)) {
-      const unprefixed = name.slice(ENV_PREFIX.length);
+    if (name.startsWith(envPrefix)) {
+      const unprefixed = name.slice(envPrefix.length);
       if (!expected.has(unprefixed)) {
         throw new Error(
-          `You should change envPrefix (${ENV_PREFIX}) to avoid conflicts with existing environment variables — unexpectedly saw ${name}`
+          `You should change envPrefix (${envPrefix}) to avoid conflicts with existing environment variables — unexpectedly saw ${name}`
         );
       }
     }
   }
 }
 
-export function env(name: string, fallback: any) {
-  const prefixed = ENV_PREFIX + name;
-  return prefixed in Bun.env ? Bun.env[prefixed] : fallback;
+export function env(name: string, fallback = '') {
+  const prefixed = envPrefix + name;
+  return Bun.env[prefixed] ?? fallback;
 }

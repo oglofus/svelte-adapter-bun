@@ -1,26 +1,27 @@
-import { build } from 'bun';
 import { version } from '../package.json';
 
 console.log(`Building svelte-adapter-bun v${version}...`);
 
-console.time('Build: adapter');
-await build({
-  entrypoints: ['./index.ts'],
-  outdir: 'dist',
-  packages: 'external',
-  target: 'bun',
-  format: 'esm',
-  minify: true,
-});
-console.timeEnd('Build: adapter');
-
-console.time('Build: server');
-await build({
-  entrypoints: ['./src/index.ts', './src/handler.ts', './src/env.ts'],
-  outdir: 'dist/files',
-  target: 'bun',
-  minify: false,
-  external: ['ENV', 'MANIFEST', 'SERVER', 'HANDLER'],
-  format: 'esm',
-});
-console.timeEnd('Build: server');
+for (const config of [
+  {
+    entrypoints: ['./index.ts'],
+    outdir: 'dist',
+    packages: 'external' as const,
+  },
+  {
+    entrypoints: [
+      './src/index.ts',
+      './src/handler.ts',
+      './src/env.ts',
+      './src/options.ts',
+      './src/static.ts',
+    ],
+    outdir: 'dist/files',
+    // Leave local imports for SvelteKit's single SSR build graph.
+    external: ['./*', 'svelte-adapter-bun:manifest', 'WEBSOCKET'],
+  },
+]) {
+  const result = await Bun.build({ ...config, target: 'bun', format: 'esm' });
+  if (!result.success)
+    throw new AggregateError(result.logs, 'Adapter build failed');
+}

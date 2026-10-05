@@ -1,18 +1,17 @@
-import type { Adapter, Builder } from '@sveltejs/kit';
-import { readFileSync, writeFileSync } from 'node:fs';
+import type { Adapter } from '@sveltejs/kit';
+import type { AdapterOptions } from './options.js';
 import { fileURLToPath } from 'node:url';
-import { rolldown } from 'rolldown';
+import { resolve } from 'node:path';
+import { rmSync } from 'node:fs';
 
-interface AdapterOptions {
-  out?: string;
-  precompress?: boolean;
-  envPrefix?: string;
-  serveAssets?: boolean;
-}
+const files = fileURLToPath(new URL('./files', import.meta.url)).replaceAll(
+  '\\',
+  '/'
+);
+const handoff = 'svelte-adapter-bun:manifest';
+const websocketModule = '\0svelte-adapter-bun:websocket';
 
-const files = fileURLToPath(new URL('./files', import.meta.url).href);
-
-export default function (options: AdapterOptions = {}): Adapter {
+export default function adapter(options: AdapterOptions = {}): Adapter {
   const {
     out = 'build',
     precompress = true,
@@ -22,137 +21,151 @@ export default function (options: AdapterOptions = {}): Adapter {
 
   return {
     name: 'svelte-adapter-bun',
-    async adapt(builder: Builder) {
-      const tmp = builder.getBuildDirectory('adapter-bun');
-
-      builder.rimraf(out);
-      builder.rimraf(tmp);
-      builder.mkdirp(tmp);
-
+    async adapt(builder) {
+      if (typeof Bun === 'undefined') {
+        throw new Error(
+          'svelte-adapter-bun requires Bun. Run `bun --bun run build`.'
+        );
+      }
+      rmSync(out, { force: true, recursive: true });
       builder.log.minor('Copying assets');
-      builder.writeClient(`${out}/client${builder.config.kit.paths.base}`);
-      builder.writePrerendered(
-        `${out}/prerendered${builder.config.kit.paths.base}`
+      const base = builder.config.paths.base;
+      builder.writeClient(`${out}/client${base}`);
+      const prerenderedFiles = builder.writePrerendered(
+        `${out}/prerendered${base}`
       );
-
+      const pageFiles = new Set(
+        [...builder.prerendered.pages.values()].map(page => page.file)
+      );
+      const prefix = (file: string) =>
+        `${base.slice(1)}${base ? '/' : ''}${file}`;
       if (precompress) {
-        builder.log.minor('Compressing assets');
         await Promise.all([
           builder.compress(`${out}/client`),
           builder.compress(`${out}/prerendered`),
         ]);
       }
 
-      builder.log.minor('Building server');
-
-      builder.writeServer(tmp);
-
-      writeFileSync(
-        `${tmp}/manifest.js`,
+      const server = builder.getServerDirectory();
+      builder.generateServerInstance(`${server}/server.js`);
+      const manifestFile = resolve(server, '../adapter-bun.js');
+      await Bun.write(
+        manifestFile,
         [
-          `export const manifest = ${builder.generateManifest({ relativePath: './' })};`,
+          `export { server } from './server/server.js';`,
+          `export const base = ${JSON.stringify(base)};`,
+          `export const appDir = ${JSON.stringify(builder.config.appDir)};`,
           `export const prerendered = new Set(${JSON.stringify(builder.prerendered.paths)});`,
-          `export const base = ${JSON.stringify(builder.config.kit.paths.base)};`,
-        ].join('\n\n')
+          `export const prerenderedPages = new Map(${JSON.stringify([...builder.prerendered.pages].map(([path, page]) => [path, prefix(page.file)]))});`,
+          `export const prerenderedAssets = new Set(${JSON.stringify(prerenderedFiles.filter(file => !pageFiles.has(file)).map(prefix))});`,
+          `export const prerenderedTypes = new Map(${JSON.stringify([...builder.prerendered.assets].map(([path, asset]) => [path, asset.type]))});`,
+          `export const redirects = new Map(${JSON.stringify([...builder.prerendered.redirects])});`,
+          `export const envPrefix = ${JSON.stringify(envPrefix)};`,
+          `export const serveAssets = ${serveAssets};`,
+          `export const origin = ${JSON.stringify(builder.config.paths.origin)};`,
+        ].join('\n')
       );
 
-      const pkg = JSON.parse(readFileSync('package.json', 'utf-8'));
-
-      const entrypoints: Record<string, string> = {
-        index: `${tmp}/index.js`,
-        manifest: `${tmp}/manifest.js`,
-      };
-
-      if (builder.hasServerInstrumentationFile?.()) {
-        entrypoints['instrumentation.server'] =
-          `${tmp}/instrumentation.server.js`;
-      }
-
-      // ! Bun.build is not working for some reason
-      // ! It will build successfully but the server will throw [500] GET / Error: https://svelte.dev/e/lifecycle_outside_component
-      // const result = await Bun.build({
-      // 	entrypoints: Object.values(entrypoints),
-      // 	external: [
-      // 		// dependencies could have deep exports, so we need a regex
-      // 		...Object.keys(pkg.dependencies || {}).map((d) => new RegExp(`^${d}(\\/.*)?$`).toString())
-      // 	],
-      // 	target: 'bun',
-      // 	minify: false,
-      // 	outdir: `${out}/server`,
-      // });
-
-      // if (!result.success) {
-      // 	console.error('Build failed:', result.logs);
-      // 	process.exit(1);
-      // }
-
-      const bundle = await rolldown({
-        input: entrypoints,
-        external: [
-          // dependencies could have deep exports, so we need a regex
-          ...Object.keys(pkg.dependencies || {}).map(
-            d => new RegExp(`^${d}(\\/.*)?$`)
-          ),
-          // Node.js built-in modules
-          /^node:/,
-        ],
-      });
-
-      await bundle.write({
-        dir: `${out}/server`,
-        format: 'esm',
-        sourcemap: true,
-        chunkFileNames: 'chunks/[name]-[hash].js',
-      });
-
-      await patchServerWebsocketHandler(`${out}/server/index.js`);
-
-      builder.copy(files, out, {
-        replace: {
-          ENV: './env.js',
-          HANDLER: './handler.js',
-          MANIFEST: './server/manifest.js',
-          SERVER: './server/index.js',
-          ENV_PREFIX: JSON.stringify(envPrefix),
-          BUILD_OPTIONS: JSON.stringify({ serveAssets }),
-        },
-      });
-
-      if (builder.hasServerInstrumentationFile?.()) {
-        builder.instrument?.({
-          entrypoint: `${out}/index.js`,
-          instrumentation: `${out}/server/instrumentation.server.js`,
-          module: {
-            exports: ['path', 'host', 'port', 'server'],
-          },
+      if (builder.hasServerInstrumentationFile()) {
+        builder.instrument({
+          entrypoint: `${server}/adapter-index.js`,
+          instrumentation: `${server}/instrumentation.server.js`,
+          initializer: builder.createInstrumentationInitializer({
+            outputDirectory: server,
+          }),
+          module: { exports: ['path', 'host', 'port', 'server'] },
         });
       }
+      builder.copy(server, `${out}/server`);
+      builder.copy(manifestFile, `${out}/adapter-bun.js`);
+      await Bun.write(
+        `${out}/index.js`,
+        `export { path, host, port, server } from './server/adapter-index.js';\n`
+      );
     },
-
-    supports: {
-      read: () => true,
-      instrumentation: () => true,
-    },
+    supports: { read: () => true, instrumentation: () => true },
+    vite: ({ config: kitConfig }) => ({
+      plugins: {
+        post: [
+          {
+            name: 'svelte-adapter-bun',
+            apply: 'build',
+            resolveId(id) {
+              if (id === 'WEBSOCKET') return websocketModule;
+            },
+            async load(id) {
+              if (id === websocketModule) {
+                if (options.websocket) {
+                  return `export { default } from ${JSON.stringify(resolve(options.websocket))};`;
+                }
+                const hook = kitConfig.files.hooks.server;
+                const candidates = [
+                  hook,
+                  ...kitConfig.moduleExtensions.map(
+                    extension => `${hook}/index${extension}`
+                  ),
+                  ...kitConfig.moduleExtensions.map(
+                    extension => hook + extension
+                  ),
+                ];
+                for (const candidate of candidates) {
+                  if (await Bun.file(candidate).exists()) {
+                    // Namespace access preserves the optional export without requiring
+                    // a websocket handler in apps that only export standard Kit hooks.
+                    return `import * as hooks from ${JSON.stringify(resolve(candidate))};
+                    export default Reflect.get(hooks, 'websocket');`;
+                  }
+                }
+                return 'export default undefined;';
+              }
+            },
+            async config(config) {
+              const pkg = await Bun.file('package.json').json();
+              const setting =
+                config.environments?.ssr?.resolve?.noExternal ??
+                config.ssr?.noExternal;
+              const noExternal = Array.isArray(setting)
+                ? setting
+                : typeof setting === 'string' || setting instanceof RegExp
+                  ? [setting]
+                  : [];
+              return {
+                ssr: {
+                  noExternal: true,
+                  external:
+                    setting === true
+                      ? []
+                      : Object.keys(pkg.dependencies ?? {}).filter(
+                          dep =>
+                            !noExternal.some(rule =>
+                              typeof rule === 'string'
+                                ? rule === dep
+                                : rule.test(dep)
+                            )
+                        ),
+                },
+                environments: {
+                  ssr: {
+                    build: {
+                      rolldownOptions: {
+                        input: { 'adapter-index': `${files}/index.js` },
+                        external: [handoff],
+                        output: {
+                          paths: { [handoff]: '../adapter-bun.js' },
+                          chunkFileNames: chunk =>
+                            chunk.moduleIds.some(id => id.startsWith(files))
+                              ? 'adapter-bun-[name].js'
+                              : 'chunks/[name].js',
+                        },
+                      },
+                    },
+                  },
+                },
+              };
+            },
+          },
+        ],
+      },
+    }),
   };
-}
-
-/**
- * Patch sveltekit server to return the websocket handler
- */
-async function patchServerWebsocketHandler(path: string) {
-  const content = readFileSync(path, 'utf-8');
-
-  const result = content
-    .replace(
-      /(const (.*?) = await get_hooks\(\);)\s+(this\.#options\.hooks\s+=\s+{)/,
-      '$1$3websocket: $2.websocket || null,'
-    )
-    .replace(/(async function get_hooks\(\) {)/, '$1let websocket;')
-    .replace(/(\({handle,)((.|\s)*?return {)/, '$1websocket,$2websocket,')
-    .replace(
-      /(async init\({ env, read }\) {)/,
-      'websocket() {return this.#options.hooks.websocket}\n$1'
-    );
-
-  writeFileSync(path, result);
 }

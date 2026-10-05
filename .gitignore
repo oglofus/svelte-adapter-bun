@@ -1,10 +1,13 @@
 # dependencies (bun install)
 node_modules
+.delta
 
 # output
 out
 dist
 *.tgz
+tests/fixtures/*/.svelte-kit
+tests/fixtures/*/build
 
 # code coverage
 coverage

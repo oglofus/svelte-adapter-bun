@@ -1,155 +1,137 @@
-/* global ENV_PREFIX */
-import { manifest, base, prerendered } from 'MANIFEST';
-import { Server } from 'SERVER';
-import { env } from 'ENV';
-import type { Server as SvelteKitServer } from '@sveltejs/kit';
-import { existsSync } from 'node:fs';
-import type { RequestHandler } from 'sirv';
-import sirv from 'sirv';
+import {
+  server,
+  base,
+  appDir,
+  prerendered,
+  prerenderedPages,
+  prerenderedAssets,
+  prerenderedTypes,
+  redirects,
+  serveAssets,
+  envPrefix,
+  origin as configuredOrigin,
+} from 'svelte-adapter-bun:manifest';
+import { env } from './env.js';
+import { createStaticHandler } from './static.js';
+import { fileURLToPath } from 'node:url';
 
-const server = new Server(manifest) as SvelteKitServer & {
-  websocket(): unknown;
-};
+const origin = env('ORIGIN', configuredOrigin);
+const addressHeader = env('ADDRESS_HEADER', '').toLowerCase();
+const protocolHeader = env('PROTOCOL_HEADER', '').toLowerCase();
+const hostHeader = env('HOST_HEADER', '').toLowerCase();
+const portHeader = env('PORT_HEADER', '').toLowerCase();
+const depth = env('XFF_DEPTH', '1');
+const xffDepth = Number(depth);
+if (!/^\d+$/.test(depth) || !Number.isSafeInteger(xffDepth) || xffDepth < 1) {
+  throw new Error(`${envPrefix}XFF_DEPTH must be a positive integer`);
+}
 
-const { serveAssets } = BUILD_OPTIONS;
-
-const origin = env('ORIGIN', undefined);
-const xff_depth = parseInt(env('XFF_DEPTH', '1'), 10);
-const address_header = env('ADDRESS_HEADER', '').toLowerCase();
-const protocol_header = env('PROTOCOL_HEADER', '').toLowerCase();
-const host_header = env('HOST_HEADER', '').toLowerCase();
-const port_header = env('PORT_HEADER', '').toLowerCase();
-
-const asset_dir = `${import.meta.dir}/client${base}`;
-
+// Runtime chunks are kept at the root of server/, beside adapter-index.js.
+const directory = fileURLToPath(new URL('../', import.meta.url));
 await server.init({
   env: Bun.env as Record<string, string>,
-  read: file => Bun.file(`${asset_dir}/${file}`).stream(),
+  read: file => Bun.file(`${directory}/client${base}/${file}`).stream(),
 });
 
-function serve(path: string, client: boolean = false) {
-  if (existsSync(path)) {
-    return sirv(path, {
-      etag: true,
-      gzip: true,
-      brotli: true,
-      setHeaders: client
-        ? (headers, pathname) => {
-            if (pathname.startsWith(`/${manifest.appDir}/immutable/`)) {
-              headers.set('cache-control', 'public,max-age=31536000,immutable');
-            }
-            return headers;
-          }
-        : undefined,
-    });
+// Kit initializes dynamic environment modules before importing user hooks.
+// Loading the optional export earlier can capture uninitialized environment
+// values or introduce a top-level-await cycle with the generated server.
+export const websocket = (await import('WEBSOCKET')).default;
+
+const staticHandlers = serveAssets
+  ? [
+      await createStaticHandler(`${directory}/client`, {
+        immutable: `${base}/${appDir}/immutable/`,
+      }),
+      await createStaticHandler(`${directory}/prerendered`, {
+        prerendered,
+        pages: prerenderedPages,
+        assets: prerenderedAssets,
+        types: prerenderedTypes,
+        redirects,
+      }),
+    ]
+  : [];
+
+export async function handler(
+  request: Request,
+  bunServer: Bun.Server<unknown>
+) {
+  for (const serve of staticHandlers) {
+    const response = await serve(request);
+    if (response) return response;
   }
-}
-
-// required because the static file server ignores trailing slashes
-function serve_prerendered(): RequestHandler {
-  const handler = serve(`${import.meta.dir}/prerendered`, false)!;
-
-  return (req, next) => {
-    let { pathname, search } = new URL(req.url);
-
-    try {
-      pathname = decodeURIComponent(pathname);
-    } catch {
-      // ignore invalid URI
-    }
-
-    if (prerendered.has(pathname)) {
-      return handler(req, next);
-    }
-
-    // remove or add trailing slash as appropriate
-    let location =
-      pathname.at(-1) === '/' ? pathname.slice(0, -1) : pathname + '/';
-    if (prerendered.has(location)) {
-      if (search) location += search;
-      return new Response(null, { status: 308, headers: { location } });
-    } else {
-      return next?.() || new Response(null, { status: 404 });
-    }
-  };
-}
-
-const ssr = async (request: Request, bunServer: Bun.Server) => {
-  const baseOrigin = origin || get_origin(request.headers);
-  const url = request.url.slice(request.url.split('/', 3).join('/').length);
-  const newRequest = new Request(baseOrigin + url, request);
-
-  return server.respond(newRequest, {
-    platform: { server: bunServer, request },
-    getClientAddress() {
-      if (address_header) {
-        if (!request.headers.has(address_header)) {
-          throw new Error(
-            `Address header was specified with ${
-              ENV_PREFIX + 'ADDRESS_HEADER'
-            }=${address_header} but is absent from request`
+  const url = new URL(request.url);
+  if (origin) {
+    const external = new URL(origin);
+    url.protocol = external.protocol;
+    url.host = external.host;
+  } else if (protocolHeader || hostHeader || portHeader) {
+    const protocol =
+      (protocolHeader && request.headers.get(protocolHeader)) ||
+      url.protocol.slice(0, -1);
+    const host = (hostHeader && request.headers.get(hostHeader)) || url.host;
+    const external = new URL(`${protocol}://${host}`);
+    const port = portHeader && request.headers.get(portHeader);
+    if (port) external.port = port;
+    url.protocol = external.protocol;
+    url.host = external.host;
+  }
+  let upgraded = false;
+  // Track upgrades from legacy hooks too. Bind all other native methods to
+  // the real Bun server because they rely on its internal receiver.
+  const platformServer = new Proxy(bunServer, {
+    get(target, property) {
+      if (property === 'upgrade') {
+        return (
+          original: Request,
+          options?: Parameters<typeof bunServer.upgrade>[1]
+        ) => {
+          if (!websocket) return false;
+          const success = target.upgrade(
+            original,
+            options ?? { data: undefined }
           );
-        }
-
-        const value = request.headers.get(address_header) || '';
-
-        if (address_header === 'x-forwarded-for') {
-          const addresses = value.split(',');
-
-          if (xff_depth < 1) {
-            throw new Error(
-              `${ENV_PREFIX + 'XFF_DEPTH'} must be a positive integer`
-            );
-          }
-
-          if (xff_depth > addresses.length) {
-            throw new Error(
-              `${ENV_PREFIX + 'XFF_DEPTH'} is ${xff_depth}, but only found ${
-                addresses.length
-              } addresses`
-            );
-          }
-          return addresses[addresses.length - xff_depth]?.trim() || '';
-        }
-
-        return value;
+          if (original === request && success) upgraded = true;
+          return success;
+        };
       }
-
-      return bunServer.requestIP(request)?.address || '';
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
     },
   });
-};
-
-export const getHandler = () => {
-  const websocket = server.websocket();
-
-  const staticHandlers = [
-    serveAssets && serve(`${import.meta.dir}/client${base}`, true),
-    serveAssets && serve_prerendered(),
-  ].filter(Boolean) as RequestHandler[];
-
-  const handler = (request: Request, server: Bun.Server) => {
-    function handle(i: number): Response | Promise<Response> {
-      if (i < staticHandlers.length) {
-        return staticHandlers[i]!(request, () => handle(i + 1));
-      } else {
-        return ssr(request, server);
+  const response = await server.respond(new Request(url.href, request), {
+    platform: {
+      server: platformServer as App.Platform['server'],
+      request,
+      upgrade(options?: Parameters<typeof bunServer.upgrade>[1]) {
+        return platformServer.upgrade(request, options ?? { data: undefined });
+      },
+    },
+    getClientAddress() {
+      if (!addressHeader) {
+        const address = bunServer.requestIP(request)?.address;
+        if (!address)
+          throw new Error(
+            'Client address unavailable (Unix socket). Configure ADDRESS_HEADER behind a trusted proxy.'
+          );
+        return address;
       }
-    }
-
-    return handle(0);
-  };
-
-  return {
-    fetch: handler,
-    websocket,
-  };
-};
-
-function get_origin(headers: Headers) {
-  const protocol = (protocol_header && headers.get(protocol_header)) || 'https';
-  const host = (host_header && headers.get(host_header)) || headers.get('host');
-  const port = port_header && headers.get(port_header);
-
-  return port ? `${protocol}://${host}:${port}` : `${protocol}://${host}`;
+      const value = request.headers.get(addressHeader);
+      if (!value)
+        throw new Error(
+          `${envPrefix}ADDRESS_HEADER=${addressHeader} is absent from the request`
+        );
+      if (addressHeader !== 'x-forwarded-for') return value;
+      const addresses = value.split(',').map(address => address.trim());
+      const address = addresses[addresses.length - xffDepth];
+      if (!address)
+        throw new Error(
+          `${envPrefix}XFF_DEPTH=${xffDepth} exceeds the supplied addresses`
+        );
+      return address;
+    },
+  });
+  // Bun owns the 101 response. SvelteKit still requires a normal hook Response.
+  return upgraded ? undefined : response;
 }

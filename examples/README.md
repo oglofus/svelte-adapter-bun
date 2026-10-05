@@ -8,8 +8,15 @@
 
 ## Quick Start
 
+Each example is an independent project with its own lockfile. Build the local
+adapter archive first so the example tests the actual package contents:
+
 ```bash
+bun install --frozen-lockfile
+bun run pack
 cd examples/[example-name]
-bun install
-bun -b run build
+bun install --frozen-lockfile
+bun run check
+bun run build
+bun run start
 ```

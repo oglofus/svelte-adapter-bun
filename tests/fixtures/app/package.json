@@ -1,0 +1,5 @@
+{
+  "name": "adapter-integration-fixture",
+  "private": true,
+  "type": "module"
+}

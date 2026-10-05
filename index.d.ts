@@ -1,15 +1,7 @@
 import type { Adapter } from '@sveltejs/kit';
+import type { AdapterOptions } from './options.js';
 import './ambient.js';
 
-interface AdapterOptions {
-  out?: string;
-  precompress?: boolean;
-  envPrefix?: string;
-  /**
-   * If enabled, the adapter will serve static assets.
-   * @default true
-   */
-  serveAssets?: boolean;
-}
+export type { AdapterOptions } from './options.js';
 
 export default function adapter(options?: AdapterOptions): Adapter;

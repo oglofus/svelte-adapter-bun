@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { browser } from '$app/env';
 	import { enhance } from '$app/forms';
 	import { confetti } from '@neoconfetti/svelte';
 	import type { ActionData, PageData } from './$types';
@@ -184,7 +185,7 @@
 	</div>
 </form>
 
-{#if won}
+{#if won && browser}
 	<div
 		style="position: absolute; left: 50%; top: 30%"
 		use:confetti={{

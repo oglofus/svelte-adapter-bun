@@ -1,48 +1,60 @@
 # Nginx Example
 
 Production deployment setup with Nginx reverse proxy for `svelte-adapter-bun`.
+Use Bun 1.4.2.
 
-## Features
+## Docker Quick Start
 
-- Nginx reverse proxy
-- Static asset serving
-- Docker containerization
-- SSL/HTTPS support
-- Maintenance page fallback
-- Asset compression (gzip)
-- Proper caching headers
+From this example directory:
 
-## Quick Start
-
-```bash
-bun install
-bun run build
-docker-compose -f docker/docker-compose.yml up
+```sh
+docker compose -f docker/docker-compose.yml up --build
 ```
 
-Visit `http://localhost`
+Visit `http://app.localhost`. The supplied configuration uses HTTP and sets
+`ORIGIN=http://app.localhost`; TLS requires your own certificates and configuration.
 
-## Configuration
+The app image builds and packs the local adapter from the repository root before
+installing this independent example. The repository-root build context is required
+by the example's `file:../../svelte-adapter-bun.tgz` dependency.
 
-The example uses:
+```sh
+docker compose -f docker/docker-compose.yml down
+```
 
-- `serveAssets: false` - Nginx serves static assets
-- Custom build script for Docker deployment
-- Nginx configuration optimized for SvelteKit
+## Local Build
 
-## Docker Setup
+Build the adapter first, starting in the repository root:
 
-```bash
-# Build and run
-docker-compose -f docker/docker-compose.yml up --build
+```sh
+bun install
+bun run pack
+cd examples/nginx
+bun install
+bun --bun run check
+bun --bun run build
+```
 
-# Stop
-docker-compose -f docker/docker-compose.yml down
+## Build and Deployment Layout
+
+- `serveAssets: false`: Nginx serves static assets; the Bun server handles SSR.
+- SvelteKit's Vite build and the adapter produce `build/index.js`, `build/client`
+  and `build/prerendered`. There is no second server bundling step.
+- The packaging script adds `build/entrypoint.sh`. At startup it replaces the
+  shared volume's `client` and `prerendered` directories with the current build.
+- Nginx mounts that volume read-only and serves assets and prerendered pages
+  (including gzip files), forwarding other requests to Bun.
+- Immutable assets receive long-lived caching; a maintenance page is returned
+  when the backend is unavailable.
+
+For a direct SSR-only smoke test (static files will not be served):
+
+```sh
+ORIGIN=http://localhost:3000 bun --bun run ./build/index.js
 ```
 
 ## Production Notes
 
-- Configure SSL certificates in `docker/nginx.conf`
-- Update `server_name` for your domain
-- Set proper `ORIGIN` environment variable
-- Consider load balancing for high traffic
+- Add TLS listeners and mount certificates in `docker/nginx.conf`.
+- Update `server_name` and the Compose `ORIGIN` together for your public URL.
+- Consider load balancing for high traffic.

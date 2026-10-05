@@ -24,10 +24,16 @@
   },
   "homepage": "https://github.com/gornostay25/svelte-adapter-bun#readme",
   "scripts": {
-    "prepare": "husky || echo ''",
     "build": "bun run scripts/build.ts",
+    "pack": "bun run build && bun pm pack --filename svelte-adapter-bun.tgz",
+    "check": "bun --bun run tsc --noEmit",
+    "test": "bun test",
     "format": "prettier --write ."
   },
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "packageManager": "bun@1.4.2",
   "type": "module",
   "exports": {
     ".": {
@@ -40,25 +46,19 @@
   "files": [
     "dist",
     "index.d.ts",
+    "options.d.ts",
     "ambient.d.ts"
   ],
   "devDependencies": {
-    "@types/bun": "latest",
-    "husky": "^9.1.7",
-    "lint-staged": "^16.1.6",
-    "prettier": "3.6.2",
-    "sirv": "file:packages/sirv"
+    "@sveltejs/kit": "^3.0.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/bun": "^1.4.2",
+    "prettier": "3.9.9",
+    "svelte": "^5.57.1",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.2"
   },
   "peerDependencies": {
-    "typescript": "^5",
-    "@sveltejs/kit": "^2.4.0"
-  },
-  "dependencies": {
-    "rolldown": "^1.0.0-beta.38"
-  },
-  "lint-staged": {
-    "*.{js,jsx,ts,tsx,json,css,md}": [
-      "prettier --write"
-    ]
+    "@sveltejs/kit": "^3.0.0"
   }
 }

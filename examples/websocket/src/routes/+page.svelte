@@ -2,7 +2,9 @@
   import { onMount } from 'svelte';
 
   onMount(() => {
-    const socket = new WebSocket('ws://localhost:3000/ws');
+    const url = new URL('/ws', location.href);
+    url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socket = new WebSocket(url);
     socket.onmessage = event => {
       document.querySelector('pre')!.textContent += event.data + '\n';
     };
@@ -13,9 +15,10 @@
       document.querySelector('pre')!.textContent +=
         'Disconnected from server\n';
     };
-    socket.onerror = event => {
-      document.querySelector('pre')!.textContent += `Error: ${event.message}\n`;
+    socket.onerror = () => {
+      document.querySelector('pre')!.textContent += 'WebSocket connection failed\n';
     };
+    return () => socket.close();
   });
 </script>
 
