@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "svelte-adapter-bun",
+      "name": "@oglofus/svelte-adapter-bun",
       "devDependencies": {
         "@sveltejs/kit": "^3.0.0",
         "@sveltejs/vite-plugin-svelte": "^7.3.1",

@@ -20,11 +20,11 @@ export default function adapter(options: AdapterOptions = {}): Adapter {
   } = options;
 
   return {
-    name: 'svelte-adapter-bun',
+    name: '@oglofus/svelte-adapter-bun',
     async adapt(builder) {
       if (typeof Bun === 'undefined') {
         throw new Error(
-          'svelte-adapter-bun requires Bun. Run `bun --bun run build`.'
+          '@oglofus/svelte-adapter-bun requires Bun. Run `bun --bun run build`.'
         );
       }
       rmSync(out, { force: true, recursive: true });
@@ -88,7 +88,7 @@ export default function adapter(options: AdapterOptions = {}): Adapter {
       plugins: {
         post: [
           {
-            name: 'svelte-adapter-bun',
+            name: '@oglofus/svelte-adapter-bun',
             apply: 'build',
             resolveId(id) {
               if (id === 'WEBSOCKET') return websocketModule;

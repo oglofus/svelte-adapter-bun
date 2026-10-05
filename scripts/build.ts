@@ -1,6 +1,6 @@
-import { version } from '../package.json';
+import { name, version } from '../package.json';
 
-console.log(`Building svelte-adapter-bun v${version}...`);
+console.log(`Building ${name} v${version}...`);
 
 for (const config of [
   {

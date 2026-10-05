@@ -19,7 +19,7 @@ RUN bun --bun run pack
 
 WORKDIR /workspace/examples/nginx
 COPY examples/nginx/package.json examples/nginx/bun.lock ./
-RUN bun install --frozen-lockfile --ignore-scripts
+RUN bun /workspace/scripts/install-example.ts nginx
 COPY examples/nginx ./
 RUN bun --bun run build
 

@@ -1,6 +1,6 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
-import adapter from 'svelte-adapter-bun';
+import adapter from '@oglofus/svelte-adapter-bun';
 import { defineConfig } from 'vite';
 
 export default defineConfig({

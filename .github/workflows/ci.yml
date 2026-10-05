@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Bun ${{ matrix.bun-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        bun-version: ['1.4.2', latest]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ matrix.bun-version }}
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run check
+
+      - run: bun test
+
+  smoke:
+    name: Packaged example (${{ matrix.example }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        example: [demo, nginx, websocket]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - run: bun install --frozen-lockfile
+
+      # Examples install the archive, so these builds exercise the published files
+      # and scoped package imports rather than importing the adapter's source.
+      - run: bun run pack
+
+      - name: Install example with fresh adapter archive
+        run: bun run example:install ${{ matrix.example }}
+
+      - run: bun install --frozen-lockfile --ignore-scripts
+        working-directory: examples/${{ matrix.example }}
+
+      - run: bun run check
+        working-directory: examples/${{ matrix.example }}
+
+      - run: bun run build
+        working-directory: examples/${{ matrix.example }}

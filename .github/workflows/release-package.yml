@@ -1,0 +1,56 @@
+name: Publish Package to NPM
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    # Prereleases must not replace npm's latest tag.
+    if: github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          bun -e '
+            const { version } = await Bun.file("package.json").json();
+            const tag = process.env.RELEASE_TAG;
+            if (tag !== version && tag !== `v${version}`) {
+              throw new Error(`Release tag ${tag} must match package version ${version}`);
+            }
+          '
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check types
+        run: bun run check
+
+      - name: Run tests
+        run: bun test
+
+      - name: Build and pack package
+        run: bun run pack
+
+      - name: Publish to NPM
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_CONFIG_TOKEN" ]; then
+            echo "::error::Set the NPM_TOKEN repository secret to an npm granular access token with publish access to @oglofus/svelte-adapter-bun."
+            exit 1
+          fi
+          bun publish --access public ./svelte-adapter-bun.tgz

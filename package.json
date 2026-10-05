@@ -1,13 +1,22 @@
 {
-  "name": "svelte-adapter-bun",
-  "version": "1.0.1",
-  "description": "Adapter for SvelteKit apps that generates a standalone Bun.js server.",
+  "name": "@oglofus/svelte-adapter-bun",
+  "version": "1.0.2",
+  "description": "A SvelteKit adapter for Bun with native HTTP serving, static assets, and WebSockets.",
   "keywords": [
     "adapter",
+    "svelte-adapter",
+    "sveltekit-adapter",
     "deploy",
+    "deployment",
     "svelte",
     "sveltekit",
-    "bun"
+    "bun",
+    "bun-runtime",
+    "ssr",
+    "server-side-rendering",
+    "websocket",
+    "websockets",
+    "static-assets"
   ],
   "author": {
     "name": "Volodymyr Palamar",
@@ -17,15 +26,20 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gornostay25/svelte-adapter-bun.git"
+    "url": "git+https://github.com/oglofus/svelte-adapter-bun.git"
   },
   "bugs": {
-    "url": "https://github.com/gornostay25/svelte-adapter-bun/issues"
+    "url": "https://github.com/oglofus/svelte-adapter-bun/issues"
   },
-  "homepage": "https://github.com/gornostay25/svelte-adapter-bun#readme",
+  "homepage": "https://github.com/oglofus/svelte-adapter-bun#readme",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
   "scripts": {
     "build": "bun run scripts/build.ts",
     "pack": "bun run build && bun pm pack --filename svelte-adapter-bun.tgz",
+    "example:install": "bun run scripts/install-example.ts",
     "check": "bun --bun run tsc --noEmit",
     "test": "bun test",
     "format": "prettier --write ."

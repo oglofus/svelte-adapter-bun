@@ -1,6 +1,6 @@
 # Nginx Example
 
-Production deployment setup with Nginx reverse proxy for `svelte-adapter-bun`.
+Production deployment setup with Nginx reverse proxy for `@oglofus/svelte-adapter-bun`.
 Use Bun 1.4.2.
 
 ## Docker Quick Start
@@ -27,10 +27,10 @@ docker compose -f docker/docker-compose.yml down
 Build the adapter first, starting in the repository root:
 
 ```sh
-bun install
+bun install --frozen-lockfile
 bun run pack
+bun run example:install nginx
 cd examples/nginx
-bun install
 bun --bun run check
 bun --bun run build
 ```
